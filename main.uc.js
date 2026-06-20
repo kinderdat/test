@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name           Zenslop
-// @version        1.1.0
+// @version        1.2.0
 // @description    Hooks into Zen's sidebar to render active video streams.
 // ==/UserScript==
 
@@ -8,26 +8,62 @@
   if (window.__zenslopLoaded) return;
   window.__zenslopLoaded = true;
 
-  const DEBUG = false;
+  const PREF_BRANCH = "zenslop.";
+
+  const Prefs = {
+    getBool(key, fallback) {
+      try { return Services.prefs.getBoolPref(PREF_BRANCH + key, fallback); }
+      catch (_) { return fallback; }
+    },
+    getChar(key, fallback) {
+      try { return Services.prefs.getCharPref(PREF_BRANCH + key, fallback); }
+      catch (_) { return fallback; }
+    },
+    getInt(key, fallback) {
+      try { return Services.prefs.getIntPref(PREF_BRANCH + key, fallback); }
+      catch (_) { return fallback; }
+    },
+    observe(key, callback) {
+      const observer = {
+        observe(subject, topic, data) {
+          if (topic === "nsPref:changed" && data === PREF_BRANCH + key) callback();
+        },
+      };
+      try { Services.prefs.addObserver(PREF_BRANCH + key, observer, false); }
+      catch (_) {}
+      return observer;
+    },
+  };
+
+  function readSettings() {
+    return {
+      clickToFocus: Prefs.getBool("clickToFocus", true),
+      glowEffect: Prefs.getBool("glowEffect", false),
+      glowColor: Prefs.getChar("glowColor", "rgba(139, 92, 246, 0.4)"),
+      glowSize: Prefs.getChar("glowSize", "14"),
+      borderRadius: Prefs.getChar("borderRadius", "default"),
+      maxHeight: parseInt(Prefs.getChar("maxHeight", "600"), 10) || 600,
+      gap: parseInt(Prefs.getChar("gap", "6"), 10) || 6,
+      tabPadding: Prefs.getBool("tabPadding", true),
+      debugLogging: Prefs.getBool("debugLogging", false),
+    };
+  }
+
+  let S = readSettings();
 
   const LOG_PREFIX = "[Zenslop]";
-  const log = DEBUG ? (...a) => console.log(LOG_PREFIX, ...a) : () => {};
-  const warn = DEBUG ? (...a) => console.warn(LOG_PREFIX, ...a) : () => {};
+  const log = (...a) => { if (S.debugLogging) console.log(LOG_PREFIX, ...a); };
+  const warn = (...a) => { if (S.debugLogging) console.warn(LOG_PREFIX, ...a); };
   const err = (...a) => console.error(LOG_PREFIX, ...a);
   const safe = (fn) => {
-    try {
-      return fn();
-    } catch (_) {
-      return undefined;
-    }
+    try { return fn(); }
+    catch (_) { return undefined; }
   };
 
   const CONFIG = Object.freeze({
-    GAP: 6,
     ANIM_MS: 220,
     ANIM_TAIL_MS: 350,
     ELEVATED_HOLD_MS: 180,
-    MAX_HEIGHT: 600,
     DEFAULT_ASPECT: 16 / 9,
     PIP_OPEN_DEBOUNCE_MS: 1500,
     PIP_OBSERVE_TIMEOUT_MS: 3000,
@@ -35,8 +71,6 @@
 
   const MUSIC_PLAYER_SELECTORS =
     "#zen-media-controls-toolbar, .zen-sidebar-bottom-buttons";
-  const TAB_LIST_SELECTORS =
-    "#tabbrowser-arrowscrollbox, #zen-tabs-wrapper, #tabbrowser-tabs";
   const PIP_BUTTON_SELECTORS = [
     '[id*="pictureinpicture" i]',
     '[class*="pictureinpicture" i]',
@@ -50,6 +84,23 @@
   if (!musicPlayerUI) {
     err("Could not find the music player UI.");
     return;
+  }
+
+  function applyVisualStyles() {
+    const br = S.borderRadius === "default"
+      ? "var(--zen-border-radius)"
+      : S.borderRadius + "px";
+    pipContainer.style.borderRadius = br;
+
+    if (S.glowEffect) {
+      const size = parseInt(S.glowSize, 10) || 14;
+      pipContainer.style.boxShadow = `0 0 ${size}px ${S.glowColor}, 0 0 ${size * 2}px ${S.glowColor}`;
+    } else {
+      pipContainer.style.boxShadow = "none";
+    }
+
+    pipContainer.style.pointerEvents = S.clickToFocus ? "auto" : "none";
+    pipContainer.style.cursor = S.clickToFocus ? "pointer" : "default";
   }
 
   const styleEl = document.createElement("style");
@@ -92,9 +143,9 @@
   pipContainer.appendChild(canvasEl);
   document.documentElement.appendChild(pipContainer);
 
-  let lastTop = -1,
-    lastLeft = -1,
-    lastWidth = -1;
+  applyVisualStyles();
+
+  let lastTop = -1, lastLeft = -1, lastWidth = -1;
   let lastVisible = null;
   let lastOpacity = NaN;
   let isStreaming = false;
@@ -109,6 +160,7 @@
   let videoAspect = CONFIG.DEFAULT_ASPECT;
 
   const observers = [];
+  const prefObservers = [];
   const eventListeners = [];
 
   function addEventListener(target, type, handler, options) {
@@ -132,16 +184,12 @@
   let paddedTab = null;
   function findBottomMostTab() {
     const tabs = document.querySelectorAll(".tabbrowser-tab");
-    let best = null,
-      bestBottom = -Infinity;
+    let best = null, bestBottom = -Infinity;
     for (const t of tabs) {
       if (t.hidden) continue;
       const r = t.getBoundingClientRect();
       if (r.width === 0 || r.height === 0) continue;
-      if (r.bottom > bestBottom) {
-        bestBottom = r.bottom;
-        best = t;
-      }
+      if (r.bottom > bestBottom) { bestBottom = r.bottom; best = t; }
     }
     return best;
   }
@@ -150,6 +198,7 @@
     paddedTab = null;
   }
   function setTabListPadding(px) {
+    if (!S.tabPadding) { clearPaddedTab(); lastTabPad = -1; return; }
     const target = px > 0 ? findBottomMostTab() : null;
     if (px === lastTabPad && target === paddedTab) return;
     lastTabPad = px;
@@ -175,29 +224,20 @@
         if (r.width !== 0 && r.height !== 0 && r.top < top) top = r.top;
       }
     }
-    return {
-      top,
-      baseTop: baseRect.top,
-      left: baseRect.left,
-      width: baseRect.width,
-    };
+    return { top, baseTop: baseRect.top, left: baseRect.left, width: baseRect.width };
   }
 
   function getMediaPlayerVisibility() {
-    if (musicPlayerUI.hidden || musicPlayerUI.hasAttribute("hidden")) {
+    if (musicPlayerUI.hidden || musicPlayerUI.hasAttribute("hidden"))
       return { visible: false, opacity: 0 };
-    }
     const cs = window.getComputedStyle(musicPlayerUI);
-    if (cs.display === "none" || cs.visibility === "hidden") {
+    if (cs.display === "none" || cs.visibility === "hidden")
       return { visible: false, opacity: 0 };
-    }
-    if (musicPlayerUI.offsetParent === null && cs.position !== "fixed") {
+    if (musicPlayerUI.offsetParent === null && cs.position !== "fixed")
       return { visible: false, opacity: 0 };
-    }
     const r = musicPlayerUI.getBoundingClientRect();
-    if (r.width === 0 || r.height === 0) {
+    if (r.width === 0 || r.height === 0)
       return { visible: false, opacity: 0 };
-    }
     return { visible: true, opacity: parseFloat(cs.opacity) };
   }
 
@@ -220,17 +260,12 @@
     }
 
     if (effectivelyVisible) {
-      const {
-        top: mediaTopRaw,
-        baseTop,
-        left,
-        width: playerWidth,
-      } = getMediaTopEdge(true);
+      const { top: mediaTopRaw, baseTop, left, width: playerWidth } = getMediaTopEdge(true);
       if (playerWidth !== 0) {
         let width = playerWidth;
         let height = width / videoAspect;
-        if (height > CONFIG.MAX_HEIGHT) {
-          height = CONFIG.MAX_HEIGHT;
+        if (height > S.maxHeight) {
+          height = S.maxHeight;
           width = height * videoAspect;
         }
         const adjustedLeft = left + (playerWidth - width) / 2;
@@ -240,22 +275,15 @@
         if (mediaTopRaw < baseTop - 1) {
           lastElevatedTop = mediaTopRaw;
           lastElevatedAt = now;
-        } else if (
-          lastElevatedTop !== null &&
-          now - lastElevatedAt < CONFIG.ELEVATED_HOLD_MS
-        ) {
+        } else if (lastElevatedTop !== null && now - lastElevatedAt < CONFIG.ELEVATED_HOLD_MS) {
           mediaTop = lastElevatedTop;
           schedule();
         } else {
           lastElevatedTop = null;
         }
 
-        const top = mediaTop - CONFIG.GAP - height;
-        if (
-          top !== lastTop ||
-          adjustedLeft !== lastLeft ||
-          width !== lastWidth
-        ) {
+        const top = mediaTop - S.gap - height;
+        if (top !== lastTop || adjustedLeft !== lastLeft || width !== lastWidth) {
           const s = pipContainer.style;
           s.width = width + "px";
           s.height = height + "px";
@@ -266,7 +294,7 @@
           lastWidth = width;
           activeUntil = now + CONFIG.ANIM_TAIL_MS;
         }
-        setTabListPadding(userHidden ? 0 : Math.ceil(height + CONFIG.GAP * 2));
+        setTabListPadding(userHidden ? 0 : Math.ceil(height + S.gap * 2));
       }
     } else {
       setTabListPadding(0);
@@ -301,30 +329,13 @@
   }
 
   function cancelAnimation() {
-    if (currentAnimation) {
-      currentAnimation.cancel();
-      currentAnimation = null;
-    }
-    if (animateOutTimer) {
-      clearTimeout(animateOutTimer);
-      animateOutTimer = null;
-    }
+    if (currentAnimation) { currentAnimation.cancel(); currentAnimation = null; }
+    if (animateOutTimer) { clearTimeout(animateOutTimer); animateOutTimer = null; }
   }
 
-  addEventListener(musicPlayerUI, "mouseenter", () => {
-    hoverActive = true;
-    bump();
-  });
-  addEventListener(musicPlayerUI, "mouseleave", () => {
-    hoverActive = false;
-    bump();
-  });
-  for (const ev of [
-    "transitionrun",
-    "transitionend",
-    "animationstart",
-    "animationend",
-  ]) {
+  addEventListener(musicPlayerUI, "mouseenter", () => { hoverActive = true; bump(); });
+  addEventListener(musicPlayerUI, "mouseleave", () => { hoverActive = false; bump(); });
+  for (const ev of ["transitionrun", "transitionend", "animationstart", "animationend"]) {
     addEventListener(musicPlayerUI, ev, bump);
   }
 
@@ -337,27 +348,18 @@
 
   addEventListener(window, "resize", bump);
 
-  // Toggle button
   const EYE_SVG =
     "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='context-fill' fill-opacity='context-fill-opacity'>" +
     "<path d='M12 5c-7 0-11 7-11 7s4 7 11 7 11-7 11-7-4-7-11-7zm0 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8z'/></svg>";
   const EYE_OFF_SVG =
     "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='context-fill' fill-opacity='context-fill-opacity'>" +
     "<path d='M2 2l20 20-1.4 1.4-3.5-3.5A12 12 0 0 1 12 21C5 21 1 14 1 14a20 20 0 0 1 4.6-5.6L.6 3.4 2 2zm10 6a4 4 0 0 1 4 4c0 .6-.1 1.1-.3 1.6l-5.3-5.3c.5-.2 1-.3 1.6-.3zM12 5c7 0 11 7 11 7a20 20 0 0 1-3.7 4.6l-2.1-2.1A8 8 0 0 0 12 7c-.7 0-1.4.1-2 .3L7.7 5C9 4.4 10.4 5 12 5z'/></svg>";
-  const eyeUrl = (svg) =>
-    `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}")`;
+  const eyeUrl = (svg) => `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}")`;
   const EYE_URL = eyeUrl(EYE_SVG);
   const EYE_OFF_URL = eyeUrl(EYE_OFF_SVG);
   const STRIPPED_ATTRS = [
-    "command",
-    "oncommand",
-    "onclick",
-    "data-l10n-id",
-    "style",
-    "hidden",
-    "collapsed",
-    "disabled",
-    "aria-hidden",
+    "command", "oncommand", "onclick", "data-l10n-id",
+    "style", "hidden", "collapsed", "disabled", "aria-hidden",
   ];
 
   let toggleBtn = null;
@@ -406,7 +408,6 @@
       if (existing && existing.parentNode) {
         const parent = existing.parentNode;
         const btn = buildToggle(existing);
-
         parent.insertBefore(btn, existing.nextSibling);
         parent.style.minWidth = "fit-content";
         parent.style.overflow = "visible";
@@ -418,11 +419,7 @@
     }
   }
 
-  // Single consolidated MutationObserver for both bump and placeToggle.
-  const mainObserver = new MutationObserver((mutations) => {
-    bump();
-    placeToggle();
-  });
+  const mainObserver = new MutationObserver(() => { bump(); placeToggle(); });
   mainObserver.observe(musicPlayerUI, {
     attributes: true,
     attributeFilter: ["hidden", "style", "class", "open", "collapsed"],
@@ -431,51 +428,51 @@
   });
   observers.push(mainObserver);
 
-  // If toggle not placed yet, keep trying via the consolidated observer above.
-  // No separate observer needed — the mainObserver already watches childList.
-
-  // BrowsingContext bookkeeping
   let sourceBC = null;
   let lastPipOpenAt = 0;
 
   function isBrowsingContextLive(bc) {
     if (!bc) return false;
-    try {
-      return bc.currentWindowGlobal != null;
-    } catch (_) {
-      return false;
-    }
+    try { return bc.currentWindowGlobal != null; }
+    catch (_) { return false; }
   }
 
   function getActiveActor() {
-    if (!sourceBC || !isBrowsingContextLive(sourceBC)) {
-      sourceBC = null;
-      return null;
-    }
-    return (
-      safe(() => sourceBC.currentWindowGlobal?.getActor("ZenSidebarPiP")) ||
-      null
-    );
+    if (!sourceBC || !isBrowsingContextLive(sourceBC)) { sourceBC = null; return null; }
+    return safe(() => sourceBC.currentWindowGlobal?.getActor("ZenSidebarPiP")) || null;
   }
+
+  function focusSourceTab() {
+    if (!sourceBC) return;
+    try {
+      const browserEl = sourceBC.top?.embedderElement;
+      if (!browserEl) return;
+      const gb = window.gBrowser;
+      if (!gb) return;
+      const tab = gb.getTabForBrowser(browserEl);
+      if (tab) gb.selectedTab = tab;
+    } catch (_) {}
+  }
+
+  addEventListener(pipContainer, "click", (e) => {
+    if (!S.clickToFocus) return;
+    e.preventDefault();
+    e.stopPropagation();
+    focusSourceTab();
+  });
 
   function awaitNextPipWindow() {
     let timeoutId = null;
-    const unregister = () =>
-      safe(() => Services.ww.unregisterNotification(observer));
+    const unregister = () => safe(() => Services.ww.unregisterNotification(observer));
     const observer = {
       observe(subject, topic) {
         if (topic !== "domwindowopened") return;
-        subject.addEventListener(
-          "load",
-          () => {
-            const wt =
-              subject.document?.documentElement?.getAttribute("windowtype");
-            if (wt !== "Toolkit:PictureInPicture") return;
-            unregister();
-            if (timeoutId) clearTimeout(timeoutId);
-          },
-          { once: true },
-        );
+        subject.addEventListener("load", () => {
+          const wt = subject.document?.documentElement?.getAttribute("windowtype");
+          if (wt !== "Toolkit:PictureInPicture") return;
+          unregister();
+          if (timeoutId) clearTimeout(timeoutId);
+        }, { once: true });
       },
     };
     Services.ww.registerNotification(observer);
@@ -490,12 +487,10 @@
     lastPipOpenAt = performance.now();
   });
 
-  // Public controller surface invoked by the parent JSWindowActor.
   window.ZenPiPController = {
     drawFrame(frame) {
-      try {
-        canvasCtx.drawImage(frame, 0, 0, canvasEl.width, canvasEl.height);
-      } catch (_) {}
+      try { canvasCtx.drawImage(frame, 0, 0, canvasEl.width, canvasEl.height); }
+      catch (_) {}
     },
     showVideo(width, height, browsingContext) {
       setSourceDimensions(width, height);
@@ -505,8 +500,7 @@
         err("showVideo: browsingContext is no longer live, ignoring");
         return;
       }
-      const sourceChanged =
-        previousSourceBC && nextSourceBC && previousSourceBC !== nextSourceBC;
+      const sourceChanged = previousSourceBC && nextSourceBC && previousSourceBC !== nextSourceBC;
       sourceBC = nextSourceBC;
 
       cancelAnimation();
@@ -535,16 +529,9 @@
       currentAnimation = pipContainer.animate(
         [
           { opacity: 0, transform: "scale(0.9) translateY(8px)" },
-          {
-            opacity: userHidden ? 0 : 1,
-            transform: "scale(1) translateY(0)",
-          },
+          { opacity: userHidden ? 0 : 1, transform: "scale(1) translateY(0)" },
         ],
-        {
-          duration: CONFIG.ANIM_MS,
-          easing: "ease",
-          fill: "forwards",
-        },
+        { duration: CONFIG.ANIM_MS, easing: "ease", fill: "forwards" },
       );
       currentAnimation.onfinish = () => {
         currentAnimation = null;
@@ -567,17 +554,10 @@
 
       currentAnimation = pipContainer.animate(
         [
-          {
-            opacity: userHidden ? 0 : 1,
-            transform: "scale(1) translateY(0)",
-          },
+          { opacity: userHidden ? 0 : 1, transform: "scale(1) translateY(0)" },
           { opacity: 0, transform: "scale(0.9) translateY(8px)" },
         ],
-        {
-          duration: CONFIG.ANIM_MS,
-          easing: "ease",
-          fill: "forwards",
-        },
+        { duration: CONFIG.ANIM_MS, easing: "ease", fill: "forwards" },
       );
       currentAnimation.onfinish = () => {
         currentAnimation = null;
@@ -594,12 +574,22 @@
       };
     },
 
-    setDebug(val) {
-      // Handled by parent actor — no-op here but kept for API symmetry.
-    },
+    setDebug(val) {},
   };
 
-  // Auto-detect the mod directory inside sine-mods.
+  // Preference change handlers
+  function onPrefsChanged() {
+    S = readSettings();
+    applyVisualStyles();
+    if (!S.tabPadding && isStreaming) setTabListPadding(0);
+    if (isStreaming) bump();
+  }
+
+  for (const key of ["clickToFocus", "glowEffect", "glowColor", "glowSize", "borderRadius", "maxHeight", "gap", "tabPadding", "debugLogging"]) {
+    prefObservers.push(Prefs.observe(key, onPrefsChanged));
+  }
+
+  // Auto-detect the mod directory
   function findModDir() {
     const profileDir = Services.dirsvc.get("ProfD", Ci.nsIFile);
     const sineModsDir = profileDir.clone();
@@ -618,24 +608,15 @@
       const entry = entries.getNext().QueryInterface(Ci.nsIFile);
       if (!entry.isDirectory()) continue;
       const nameLower = entry.leafName.toLowerCase();
-      if (
-        nameLower === modNameLower ||
-        nameLower.startsWith(modNameLower + "-") ||
-        nameLower.startsWith(modNameLower + "_")
-      ) {
-        if (!match || entry.leafName.length < match.leafName.length) {
-          match = entry;
-        }
+      if (nameLower === modNameLower || nameLower.startsWith(modNameLower + "-") || nameLower.startsWith(modNameLower + "_")) {
+        if (!match || entry.leafName.length < match.leafName.length) match = entry;
       }
     }
 
-    if (!match) {
-      err("Could not auto-detect Zenslop mod folder in", sineModsDir.path);
-    }
+    if (!match) err("Could not auto-detect Zenslop mod folder in", sineModsDir.path);
     return match;
   }
 
-  // Register the JSWindowActor that bridges the e10s process gap.
   try {
     const modDir = findModDir();
     if (modDir) {
@@ -663,11 +644,9 @@
       });
     }
   } catch (e) {
-    if (e.name !== "NotSupportedError")
-      err("Failed to register JSWindowActor:", e);
+    if (e.name !== "NotSupportedError") err("Failed to register JSWindowActor:", e);
   }
 
-  // Cleanup on unload.
   addEventListener(window, "unload", () => {
     cancelAnimation();
     stopTracking();
@@ -675,21 +654,19 @@
     for (const obs of observers) obs.disconnect();
     observers.length = 0;
 
-    if (resizeObserver) {
-      resizeObserver.disconnect();
-      resizeObserver = null;
+    if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
+
+    for (const obs of prefObservers) {
+      try { Services.prefs.removeObserver(PREF_BRANCH, obs); } catch (_) {}
     }
+    prefObservers.length = 0;
 
     for (const { target, type, handler, options } of eventListeners) {
-      try {
-        target.removeEventListener(type, handler, options);
-      } catch (_) {}
+      try { target.removeEventListener(type, handler, options); } catch (_) {}
     }
     eventListeners.length = 0;
 
-    if (toggleBtn && toggleBtn.isConnected) {
-      toggleBtn.remove();
-    }
+    if (toggleBtn && toggleBtn.isConnected) toggleBtn.remove();
     clearPaddedTab();
     if (styleEl.isConnected) styleEl.remove();
     if (pipContainer.isConnected) pipContainer.remove();
@@ -706,9 +683,7 @@
       }
     } catch (_) {}
 
-    try {
-      ChromeUtils.unregisterWindowActor("ZenSidebarPiP");
-    } catch (_) {}
+    try { ChromeUtils.unregisterWindowActor("ZenSidebarPiP"); } catch (_) {}
   });
 
   log("Zenslop initialized.");

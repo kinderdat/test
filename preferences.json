@@ -1,0 +1,82 @@
+[
+  {
+    "defaultValue": true,
+    "property": "zenslop.clickToFocus",
+    "label": "Click the video preview to focus the source tab",
+    "type": "checkbox"
+  },
+  {
+    "defaultValue": false,
+    "property": "zenslop.glowEffect",
+    "label": "Glow / shadow effect around the video preview",
+    "type": "checkbox"
+  },
+  {
+    "defaultValue": "rgba(139, 92, 246, 0.4)",
+    "property": "zenslop.glowColor",
+    "label": "Glow color (CSS color value)",
+    "type": "string",
+    "placeholder": "rgba(139, 92, 246, 0.4)"
+  },
+  {
+    "defaultValue": "14",
+    "property": "zenslop.glowSize",
+    "label": "Glow blur radius (px)",
+    "type": "string",
+    "placeholder": "14"
+  },
+  {
+    "defaultValue": "default",
+    "options": [
+      {
+        "label": "Zen default",
+        "value": "default"
+      },
+      {
+        "label": "Sharp (2px)",
+        "value": "2"
+      },
+      {
+        "label": "Rounded (10px)",
+        "value": "10"
+      },
+      {
+        "label": "Pill (9999px)",
+        "value": "9999"
+      },
+      {
+        "label": "None (0px)",
+        "value": "0"
+      }
+    ],
+    "property": "zenslop.borderRadius",
+    "label": "Video preview border radius",
+    "type": "dropdown"
+  },
+  {
+    "defaultValue": "600",
+    "property": "zenslop.maxHeight",
+    "label": "Maximum video preview height (px)",
+    "type": "string",
+    "placeholder": "600"
+  },
+  {
+    "defaultValue": "6",
+    "property": "zenslop.gap",
+    "label": "Gap between video and media controls (px)",
+    "type": "string",
+    "placeholder": "6"
+  },
+  {
+    "defaultValue": true,
+    "property": "zenslop.tabPadding",
+    "label": "Pad tab list so tabs can scroll above the video",
+    "type": "checkbox"
+  },
+  {
+    "defaultValue": false,
+    "property": "zenslop.debugLogging",
+    "label": "Enable verbose debug logging in console",
+    "type": "checkbox"
+  }
+]

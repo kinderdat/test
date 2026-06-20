@@ -89,15 +89,27 @@ Frame capture is driven by the chrome process: a `requestAnimationFrame` loop in
 
 ## Configuration
 
-Tunables live at the top of `main.uc.js` in the `CONFIG` block:
+Settings are available in the Sine Mods section of `about:settings` — look for the gear icon next to Zenslop.
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| Click to focus | On | Click the video preview to switch to the source tab |
+| Glow effect | Off | Neon glow / shadow around the video preview |
+| Glow color | `rgba(139, 92, 246, 0.4)` | CSS color for the glow (visible when glow is on) |
+| Glow blur radius | 14 | Blur spread in px for the glow |
+| Border radius | Zen default | Video preview corner style: Zen default / Sharp / Rounded / Pill / None |
+| Max height | 600 | Maximum video preview height in px |
+| Gap | 6 | Space between video and media controls in px |
+| Tab list padding | On | Pad the tab list so tabs scroll above the video instead of behind it |
+| Debug logging | Off | Verbose console logging for troubleshooting |
+
+Internal tunables that don't have a UI (edit `main.uc.js` directly):
 
 ```js
 const CONFIG = Object.freeze({
-  GAP: 6,                       // px between video bottom and media controls top
   ANIM_MS: 220,                 // entrance / exit animation duration
   ANIM_TAIL_MS: 350,            // keep ticking through animations after a state change
   ELEVATED_HOLD_MS: 180,        // hold elevated top through brief glitch frames
-  MAX_HEIGHT: 600,              // cap so vertical sources don't take over the sidebar
   DEFAULT_ASPECT: 16 / 9,
   PIP_OPEN_DEBOUNCE_MS: 1500,
   PIP_OBSERVE_TIMEOUT_MS: 3000,
