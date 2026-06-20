@@ -155,14 +155,8 @@
     lastTabPad = px;
 
     const value = px > 0 ? px + "px" : "";
-    for (const sel of [
-      "#tabbrowser-arrowscrollbox",
-      "#zen-tabs-wrapper",
-      "#tabbrowser-tabs",
-    ]) {
-      const el = document.querySelector(sel);
-      if (el) el.style.paddingBottom = value;
-    }
+    const scrollbox = document.querySelector("#tabbrowser-arrowscrollbox");
+    if (scrollbox) scrollbox.style.paddingBottom = value;
 
     if (target !== paddedTab) clearPaddedTab();
     if (target) {
